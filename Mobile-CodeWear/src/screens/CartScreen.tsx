@@ -22,16 +22,31 @@ type NavigationProp = MaterialTopTabNavigationProp<ClientTabParamList, 'Cart'>;
 
 export function CartScreen() {
   const navigation = useNavigation<NavigationProp>();
-  const { cartItems, updateQuantity, removeFromCart, clearCart } = useCart();
+  const {
+    cartItems,
+    cartLoading,
+    cartError,
+    reloadCart,
+    updateQuantity,
+    removeFromCart,
+    clearCart,
+  } = useCart();
 
   const [loadingPurchase, setLoadingPurchase] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'cartao'>('pix');
   const [address, setAddress] = useState('');
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   React.useEffect(() => {
-    api.get('me')
-      .then(({ data }) => setAddress(data.address || ''))
-      .catch(() => undefined);
+    api.get('users/profile')
+      .then(({ data }) => {
+        setAddress(data.address || '');
+        setProfileError(null);
+      })
+      .catch((error: unknown) => {
+        console.error('Não foi possível carregar o endereço do perfil:', error);
+        setProfileError('Falha de conexão ao carregar o endereço de entrega.');
+      });
   }, []);
 
   const getImageSource = (image: string | undefined) => image && image.trim() !== ''
@@ -77,7 +92,14 @@ export function CartScreen() {
           <Text style={styles.backButtonText}>← Continuar Comprando</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Seu Carrinho 🛒</Text>
-        {cartItems.length === 0 ? <View style={styles.emptyContainer}><Text style={styles.emptyText}>Seu carrinho está vazio.</Text></View> : <>
+        {cartLoading ? (
+          <View style={styles.emptyContainer}><ActivityIndicator color="#ffcc00" /></View>
+        ) : cartError ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.errorText}>{cartError}</Text>
+            <TouchableOpacity onPress={reloadCart}><Text style={styles.retryText}>Tentar novamente</Text></TouchableOpacity>
+          </View>
+        ) : cartItems.length === 0 ? <View style={styles.emptyContainer}><Text style={styles.emptyText}>Seu carrinho está vazio.</Text></View> : <>
           <View style={styles.itemsList}>
             {cartItems.map((item) => {
               const { price, finalPrice, hasPromotion } = getPromotionalPrice(item);
@@ -105,6 +127,7 @@ export function CartScreen() {
             <Text style={styles.checkoutSectionTitle}>Forma de pagamento</Text>
             <View style={styles.paymentRow}>{(['pix', 'cartao'] as const).map((method) => <TouchableOpacity key={method} style={[styles.paymentButton, paymentMethod === method && styles.paymentButtonSelected]} onPress={() => setPaymentMethod(method)}><Text style={paymentMethod === method ? styles.paymentTextSelected : styles.paymentText}>{method === 'pix' ? 'PIX' : 'Cartão'}</Text></TouchableOpacity>)}</View>
             <Text style={styles.checkoutSectionTitle}>Endereço de entrega</Text>
+            {profileError && <Text style={styles.errorText}>{profileError}</Text>}
             <TextInput style={styles.addressInput} placeholder="Rua, número, bairro e cidade" placeholderTextColor="#666" value={address} onChangeText={setAddress} multiline />
             <View style={styles.totalRow}><Text style={styles.totalLabel}>Total do Pedido:</Text><Text style={styles.totalValue} numberOfLines={1}>R$ {totalAmount.toFixed(2).replace('.', ',')}</Text></View>
             <TouchableOpacity style={styles.checkoutBtn} onPress={handleFinishPurchase} disabled={loadingPurchase}>{loadingPurchase ? <ActivityIndicator color="#000" /> : <Text style={styles.checkoutBtnText}>Finalizar Compra</Text>}</TouchableOpacity>
@@ -154,6 +177,8 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 16,
   },
+  errorText: { color: '#ff7777', textAlign: 'center', marginTop: 16 },
+  retryText: { color: '#ffcc00', fontWeight: 'bold', padding: 12 },
   itemsList: {
     width: '100%',
   },

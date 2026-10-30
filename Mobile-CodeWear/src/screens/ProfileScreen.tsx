@@ -3,16 +3,15 @@ import { Alert, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
-import { api, changePassword, getApiAssetUrl } from '../services/api';
-import { useAuth } from '../context/AuthContext';
+import { api, changePassword, getApiAssetUrl, uploadAvatarFile } from '../services/api';
+import { AuthUser, useAuth } from '../context/AuthContext';
 
-interface ProfileData {
+interface ProfileData extends AuthUser {
   name: string;
   email: string;
   cpf: string;
   phone: string;
   address: string;
-  avatarUrl?: string;
 }
 
 type EditableProfileField = 'name' | 'email' | 'cpf' | 'phone' | 'address';
@@ -50,7 +49,15 @@ const profileFieldLabels: Record<EditableProfileField, string> = {
 };
 
 export function ProfileScreen() {
-  const [profile, setProfile] = useState<ProfileData>({ name: '', email: '', cpf: '', phone: '', address: '' });
+  const [profile, setProfile] = useState<ProfileData>({
+    id: 0,
+    name: '',
+    email: '',
+    cpf: '',
+    phone: '',
+    address: '',
+    role: 'client',
+  });
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -59,57 +66,83 @@ export function ProfileScreen() {
   const [newPassword, setNewPassword] = useState('');
   const [emailError, setEmailError] = useState('');
   const navigation = useNavigation();
-  const { signOut } = useAuth();
+  const { signOut, setUser, user } = useAuth();
 
   useEffect(() => {
-    api.get('me').then(({ data }) => setProfile(data)).catch(() => Toast.show({ type: 'error', text1: 'Erro', text2: 'Não foi possível carregar seu perfil.' }));
-  }, []);
+    api.get<ProfileData>('users/profile')
+      .then(({ data }) => {
+        setProfile(data);
+        setUser(data);
+      })
+      .catch(() => Toast.show({ type: 'error', text1: 'Erro', text2: 'Não foi possível carregar seu perfil.' }));
+  }, [setUser]);
 
   const updateField = (field: EditableProfileField, value: string) => setProfile((current) => ({ ...current, [field]: value }));
   const chooseAvatar = async () => {
-    const choice = await new Promise<'camera' | 'gallery' | null>((resolve) => Alert.alert('Foto do perfil', 'Escolha uma origem', [
-      { text: 'Câmera', onPress: () => resolve('camera') },
-      { text: 'Galeria', onPress: () => resolve('gallery') },
-      { text: 'Cancelar', style: 'cancel', onPress: () => resolve(null) },
-    ]));
-    if (!choice) return;
-
-    const permission = choice === 'camera'
-      ? await ImagePicker.getCameraPermissionsAsync()
-      : await ImagePicker.getMediaLibraryPermissionsAsync();
-    const permissionResult = permission.granted
-      ? permission
-      : await (choice === 'camera'
-        ? ImagePicker.requestCameraPermissionsAsync()
-        : ImagePicker.requestMediaLibraryPermissionsAsync());
-
-    if (!permissionResult.granted) {
-      Toast.show({
-        type: 'error',
-        text1: 'Permissão necessária',
-        text2: choice === 'camera'
-          ? 'Permita o acesso à câmera para tirar uma foto.'
-          : 'Permita o acesso às fotos para escolher uma imagem.',
-      });
-      return;
-    }
-
-    const result = choice === 'camera'
-      ? await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [1, 1], quality: 0.8 })
-      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.8 });
-    if (result.canceled) return;
     try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Toast.show({
+          type: 'error',
+          text1: 'Permissão necessária',
+          text2: 'Permita o acesso às fotos para escolher uma imagem.',
+        });
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+      if (result.canceled || !result.assets[0]) return;
+
       setUploading(true);
       const asset = result.assets[0];
-      const formData = new FormData();
-      const mimeType = asset.mimeType ?? 'image/jpeg';
-      const avatarFile = { uri: asset.uri, name: asset.fileName ?? 'avatar.jpg', type: mimeType };
-      formData.append('avatar', avatarFile as unknown as Blob);
-      const { data } = await api.post<{ avatarUrl: string }>('users/avatar', formData);
-      setProfile((current) => ({ ...current, avatarUrl: data.avatarUrl }));
+      const extensionByMimeType: Record<string, string> = {
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp',
+      };
+      const extensionFromAsset = asset.fileName?.split('.').pop()?.toLowerCase();
+      const mimeType = asset.mimeType ?? ({
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        png: 'image/png',
+        webp: 'image/webp',
+      }[extensionFromAsset ?? '']);
+      const extension = mimeType ? extensionByMimeType[mimeType] : undefined;
+      if (!mimeType || !extension) {
+        Toast.show({
+          type: 'error',
+          text1: 'Formato não suportado',
+          text2: 'Selecione uma imagem JPEG, PNG ou WEBP.',
+        });
+        return;
+      }
+
+      const fileName = `avatar-${Date.now()}.${extension}`;
+      const avatarFile = asset.file ?? {
+        uri: asset.uri,
+        name: fileName,
+        type: mimeType,
+      };
+      const { avatarUrl } = await uploadAvatarFile(avatarFile);
+      setProfile((current) => ({ ...current, avatarUrl }));
+      setUser({ ...(user ?? profile), avatarUrl });
       Toast.show({ type: 'success', text1: 'Foto atualizada' });
-    } catch (error: unknown) { const requestError = error as { response?: { data?: { message?: string } } }; Toast.show({ type: 'error', text1: 'Erro', text2: requestError.response?.data?.message ?? 'Não foi possível enviar a foto.' }); }
-    finally { setUploading(false); }
+    } catch (error: unknown) {
+      Toast.show({
+        type: 'error',
+        text1: 'Erro',
+        text2: error instanceof Error
+          ? error.message
+          : 'Não foi possível selecionar ou enviar a foto.',
+      });
+    } finally {
+      setUploading(false);
+    }
   };
   const save = async () => {
     if (!isValidEmail(profile.email)) {
@@ -120,7 +153,14 @@ export function ProfileScreen() {
     setEmailError('');
     try {
       setLoading(true);
-      await api.put('users/profile', { name: profile.name, phone: profile.phone, address: profile.address, cpf: profile.cpf });
+      const { data } = await api.put<ProfileData>('users/profile', {
+        name: profile.name,
+        phone: profile.phone,
+        address: profile.address,
+        cpf: profile.cpf,
+      });
+      setProfile(data);
+      setUser(data);
       Toast.show({ type: 'success', text1: 'Perfil atualizado' });
     } catch (error: unknown) {
       const requestError = error as { response?: { data?: { message?: string } } };

@@ -5,7 +5,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../routes';
 
 import { api } from '../services/api';
-import { useAuth } from '../context/AuthContext';
+import { AuthUser, useAuth } from '../context/AuthContext';
 import Toast from 'react-native-toast-message';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
@@ -24,8 +24,7 @@ export function LoginScreen() {
     }
 
     try {
-      // Ajustado para 'login/' (com barra final para evitar redirect 301 no Nginx/Docker)
-      const response = await api.post<{ token: string; user: { id: number; name: string; role: 'admin' | 'client'; avatarUrl?: string } }>('login/', { email, password });
+      const response = await api.post<{ token: string; user: AuthUser }>('login', { email, password });
       await signIn(response.data.token, response.data.user);
 
       const user = response.data.user || response.data;

@@ -1,15 +1,16 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { memo, useCallback, useEffect, useState } from 'react';
 import {
+  ScrollView,
   View,
   Text,
   StyleSheet,
   Image,
   TouchableOpacity,
-  ScrollView,
   ActivityIndicator,
   Modal,
   useWindowDimensions,
   StatusBar,
+  ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -32,6 +33,162 @@ type NavigationProp = CompositeNavigationProp<
   NativeStackNavigationProp<RootStackParamList>
 >;
 
+interface ProductCardProps {
+  product: Product;
+  cardWidth: ViewStyle['width'];
+  currentSize: string;
+  currentQty: number;
+  sizeTouched: boolean;
+  imageUri?: string;
+  imageFailed: boolean;
+  onSelectSize: (productId: string, size: string) => void;
+  onChangeQuantity: (product: Product, size: string, delta: number) => void;
+  onBuy: (product: Product, size: string, quantity: number) => void;
+  onOpenProduct: (product: Product) => void;
+}
+
+const ProductCard = memo(({
+  product,
+  cardWidth,
+  currentSize,
+  currentQty,
+  sizeTouched,
+  imageUri,
+  imageFailed,
+  onSelectSize,
+  onChangeQuantity,
+  onBuy,
+  onOpenProduct,
+}: ProductCardProps) => {
+  const imageSource = imageUri && !imageFailed
+    ? { uri: imageUri }
+    : { uri: 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22%3E%3Crect width=%22100%22 height=%22100%22 fill=%22%23222%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2212%22%3EImagem não disponível%3C/text%3E%3C/svg%3E' };
+  const productId = String(product.id);
+  const price = Number(product.price ?? product.preco ?? 0);
+  const stock = Number(product.stock ?? product.estoque ?? 0);
+  const isOutOfStock = stock === 0;
+  const activePromotion = product.promotions?.find((promotion) => {
+    const now = new Date();
+    return promotion.isActive
+      && (!promotion.validFrom || new Date(promotion.validFrom) <= now)
+      && (!promotion.validUntil || new Date(promotion.validUntil) >= now)
+      && Number(promotion.discountPercentage) > 0;
+  });
+  const promotionalPrice = activePromotion
+    ? price * (1 - Number(activePromotion.discountPercentage) / 100)
+    : price;
+  const hasSizeInventory = product.sizes?.some((entry) => typeof entry !== 'string') ?? false;
+  const unavailableSelectedSize = product.sizes?.some(
+    (entry) => typeof entry !== 'string' && entry.size === currentSize && Number(entry.stock) <= 0,
+  ) ?? false;
+
+  return (
+    <View style={[styles.productCard, { width: cardWidth }]}>
+      <TouchableOpacity activeOpacity={0.9} onPress={() => onOpenProduct(product)}>
+        <Image source={imageSource} style={styles.productImage} resizeMode="cover" />
+      </TouchableOpacity>
+
+      <View style={styles.cardDetails}>
+        <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
+        <View style={styles.promotionSlot}>
+          {activePromotion && (
+            <Text style={styles.promotionText}>
+              {Number(activePromotion.discountPercentage)}% OFF
+            </Text>
+          )}
+        </View>
+        {isOutOfStock ? (
+          <Text style={styles.outOfStockText}>❌ Esgotado</Text>
+        ) : (
+          <Text style={styles.inStockText}>✅ Disp: {stock} un</Text>
+        )}
+        <Text style={styles.productDescription} numberOfLines={2}>
+          {(product.description && product.description.trim() !== '')
+            ? product.description
+            : 'Camiseta unissex, fabricada em algodão'}
+        </Text>
+
+        <View style={styles.sizeRow}>
+          {sortSizes(product.sizes || ['P', 'M', 'G', 'GG']).map((size) => {
+            const sizeName = typeof size === 'string' ? size : size.size;
+            const sizeRecord = product.sizes?.find(
+              (entry) => typeof entry !== 'string' && entry.size === sizeName,
+            );
+            const sizeStock = sizeRecord && typeof sizeRecord !== 'string'
+              ? Number(sizeRecord.stock)
+              : Number(product.stock ?? product.estoque ?? 0);
+            const sizeUnavailable = hasSizeInventory && sizeStock <= 0;
+            const isSelected = currentSize === sizeName;
+            return (
+              <TouchableOpacity
+                key={sizeName}
+                style={[
+                  styles.sizeBtn,
+                  isSelected && styles.sizeBtnSelected,
+                  sizeUnavailable && styles.sizeBtnDisabled,
+                ]}
+                onPress={() => onSelectSize(productId, sizeName)}
+                disabled={isOutOfStock}
+              >
+                <Text style={[styles.sizeBtnText, isSelected && styles.sizeBtnTextSelected]}>
+                  {sizeName}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        {sizeTouched && unavailableSelectedSize && (
+          <Text style={styles.sizeUnavailableText}>
+            Estoque indisponível para o tamanho {currentSize}.
+          </Text>
+        )}
+
+        <View style={styles.cardFooter}>
+          <View>
+            {activePromotion && (
+              <Text style={styles.originalPrice}>R$ {price.toFixed(2).replace('.', ',')}</Text>
+            )}
+            <Text style={styles.productPrice} numberOfLines={1}>
+              R$ {promotionalPrice.toFixed(2).replace('.', ',')}
+            </Text>
+          </View>
+          <View style={styles.actionsContainerMobile}>
+            <View style={styles.qtyControlMobile}>
+              <TouchableOpacity
+                style={styles.qtyBtn}
+                onPress={() => onChangeQuantity(product, currentSize, -1)}
+                disabled={isOutOfStock}
+              >
+                <Text style={styles.qtyBtnText}>-</Text>
+              </TouchableOpacity>
+              <Text style={styles.qtyText}>{currentQty}</Text>
+              <TouchableOpacity
+                style={styles.qtyBtn}
+                onPress={() => onChangeQuantity(product, currentSize, 1)}
+                disabled={isOutOfStock}
+              >
+                <Text style={styles.qtyBtnText}>+</Text>
+              </TouchableOpacity>
+            </View>
+            {isOutOfStock || unavailableSelectedSize ? (
+              <View style={[styles.buyBtnMobile, styles.buyBtnDisabled]}>
+                <Text style={styles.buyBtnTextDisabled}>Indisponível</Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.buyBtnMobile}
+                onPress={() => onBuy(product, currentSize, currentQty)}
+              >
+                <Text style={styles.buyBtnText}>Comprar</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+});
+
 export function HomeScreen() {
   const navigation = useNavigation<NavigationProp>();
   const { addToCart, cartCount } = useCart();
@@ -43,6 +200,7 @@ export function HomeScreen() {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [productsError, setProductsError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
@@ -52,12 +210,14 @@ export function HomeScreen() {
   const [quantities, setQuantities] = useState<{ [key: string]: number }>({});
 
   const loadProducts = useCallback(async () => {
+    setLoading(true);
     try {
       const response = await api.get<{ products: Product[] } | Product[]>('products?limit=100');
       const productsFromApi = Array.isArray(response.data)
         ? response.data
         : response.data.products;
 
+      setProductsError(null);
       setProducts(productsFromApi.filter((product) => product.isVisible !== false).map((product) => ({
         ...product,
         image: getApiAssetUrl(product.image ?? product.image_url),
@@ -66,7 +226,8 @@ export function HomeScreen() {
       })));
     } catch (error) {
       console.error('Erro ao carregar produtos:', error);
-      Toast.show({ type: 'error', text1: 'Erro', text2: 'Não foi possível carregar os produtos.' });
+      setProductsError('Não foi possível conectar à API para carregar os produtos. Verifique a rede e tente novamente.');
+      Toast.show({ type: 'error', text1: 'Erro de conexão', text2: 'Não foi possível carregar os produtos.' });
     } finally {
       setLoading(false);
     }
@@ -75,7 +236,9 @@ export function HomeScreen() {
   useFocusEffect(useCallback(() => {
     loadProducts();
     if (isAuthenticated) {
-      api.get<AuthUser>('me').then(({ data }) => setUser(data)).catch(() => setUser(null));
+      api.get<AuthUser>('users/profile').then(({ data }) => setUser(data)).catch((error) => {
+        console.warn('Não foi possível atualizar o perfil:', error);
+      });
     }
   }, [isAuthenticated, loadProducts, setUser]));
 
@@ -90,32 +253,30 @@ export function HomeScreen() {
     return () => clearInterval(timer);
   }, [stockedProducts.length]);
 
-  const handleSelectSize = (productId: string, size: string) => {
+  const handleSelectSize = useCallback((productId: string, size: string) => {
     setSelectedSizes((prev) => ({ ...prev, [productId]: size }));
     setSelectedSizesTouched((prev) => ({ ...prev, [productId]: true }));
-  };
+  }, []);
 
-  const handleQuantityChange = (productId: string, delta: number) => {
-    const product = products.find((item) => String(item.id) === productId);
-    const selectedSize = selectedSizes[productId] || 'M';
-    const selectedSizeRecord = product?.sizes?.find((size) => typeof size !== 'string' && size.size === selectedSize);
+  const handleQuantityChange = useCallback((product: Product, selectedSize: string, delta: number) => {
+    const productId = String(product.id);
+    const selectedSizeRecord = product.sizes?.find((size) => typeof size !== 'string' && size.size === selectedSize);
     const availableStock = selectedSizeRecord && typeof selectedSizeRecord !== 'string'
       ? selectedSizeRecord.stock
-      : Number(product?.stock ?? product?.estoque ?? 0);
+      : Number(product.stock ?? product.estoque ?? 0);
     setQuantities((prev) => {
       const current = prev[productId] || 1;
       const next = current + delta;
       return { ...prev, [productId]: Math.max(1, Math.min(next, availableStock || 1)) };
     });
-  };
+  }, []);
 
-  const handleBuy = (product: Product) => {
+  const handleBuy = useCallback((product: Product, size: string, quantity: number) => {
     if (!isAuthenticated) {
       Toast.show({ type: 'info', text1: 'Faça login para comprar', text2: 'Entre na sua conta antes de acessar o carrinho.' });
       navigation.navigate('Login');
       return;
     }
-    const size = selectedSizes[product.id] || 'M';
     const sizeRecord = product.sizes?.find((item) => typeof item !== 'string' && item.size === size);
     const hasSizeInventory = product.sizes?.some((item) => typeof item !== 'string') ?? false;
     const stock = hasSizeInventory
@@ -127,34 +288,26 @@ export function HomeScreen() {
       return;
     }
 
-    const qty = Math.min(quantities[product.id] || 1, stock);
+    const qty = Math.min(quantity, stock);
     void addToCart(product, size, qty)
       .then(() => navigation.getParent<NativeStackNavigationProp<RootStackParamList>>()?.navigate('ClientApp', { screen: 'Cart' }))
       .catch((error: unknown) => {
         const requestError = error as { response?: { data?: { message?: string } } };
         Toast.show({ type: 'error', text1: 'Estoque indisponível', text2: requestError.response?.data?.message ?? `O tamanho ${size} não está disponível.` });
       });
-  };
+  }, [addToCart, isAuthenticated, navigation]);
 
   const navigateToClientTab = (screen: 'Cart' | 'Orders') => {
     navigation.getParent<NativeStackNavigationProp<RootStackParamList>>()?.navigate('ClientApp', { screen });
   };
 
-  const getImageSource = (image?: string) => {
+  const getImageSource = useCallback((image?: string) => {
     const imageUrl = getApiAssetUrl(image);
     if (!imageUrl || failedImages.has(imageUrl)) {
       return { uri: 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22%3E%3Crect width=%22100%22 height=%22100%22 fill=%22%23222%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2212%22%3EImagem não disponível%3C/text%3E%3C/svg%3E' };
     }
     return { uri: imageUrl };
-  };
-
-  const getActivePromotion = (product: Product) => {
-    const now = new Date();
-    return product.promotions?.find((promotion) => promotion.isActive
-      && (!promotion.validFrom || new Date(promotion.validFrom) <= now)
-      && (!promotion.validUntil || new Date(promotion.validUntil) >= now)
-      && Number(promotion.discountPercentage) > 0);
-  };
+  }, [failedImages]);
 
   const handleLogout = async () => {
     await signOut();
@@ -165,12 +318,63 @@ export function HomeScreen() {
     });
   };
 
-  const requireLogin = () => {
+  const requireLogin = useCallback(() => {
     if (isAuthenticated) return true;
     Toast.show({ type: 'info', text1: 'Faça login para continuar', text2: 'Esta área é exclusiva para clientes autenticados.' });
     navigation.navigate('Login');
     return false;
-  };
+  }, [isAuthenticated, navigation]);
+
+  const handleOpenProduct = useCallback((product: Product) => {
+    if (requireLogin()) navigation.navigate('ProductDetail', { product });
+  }, [navigation, requireLogin]);
+
+  const renderProduct = useCallback(({ item }: { item: Product }) => {
+    const productId = String(item.id);
+    const imageUri = getApiAssetUrl(item.image ?? item.image_url);
+    return (
+      <ProductCard
+        product={item}
+        cardWidth={cardWidth}
+        currentSize={selectedSizes[productId] || 'M'}
+        currentQty={quantities[item.id] || (Number(item.stock ?? item.estoque ?? 0) > 0 ? 1 : 0)}
+        sizeTouched={!!selectedSizesTouched[productId]}
+        imageUri={imageUri}
+        imageFailed={!imageUri || failedImages.has(imageUri)}
+        onSelectSize={handleSelectSize}
+        onChangeQuantity={handleQuantityChange}
+        onBuy={handleBuy}
+        onOpenProduct={handleOpenProduct}
+      />
+    );
+  }, [
+    cardWidth,
+    failedImages,
+    handleBuy,
+    handleOpenProduct,
+    handleQuantityChange,
+    handleSelectSize,
+    quantities,
+    selectedSizes,
+    selectedSizesTouched,
+  ]);
+
+  const renderEmptyState = useCallback(() => {
+    if (loading) return <ActivityIndicator color="#FFCC00" size="large" />;
+    if (productsError) {
+      return (
+        <View style={styles.productLoadError}>
+          <Text style={styles.emptyText}>{productsError}</Text>
+          <TouchableOpacity onPress={() => void loadProducts()}>
+            <Text style={styles.retryText}>Tentar novamente</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return <Text style={styles.emptyText}>Nenhum produto cadastrado.</Text>;
+  }, [loadProducts, loading, productsError]);
+
+  const carouselProduct = stockedProducts[carouselIndex % Math.max(stockedProducts.length, 1)];
 
   return (
     <SafeAreaView edges={['top']} style={styles.outerContainer}>
@@ -228,180 +432,35 @@ export function HomeScreen() {
           style={styles.carousel}
           disabled={!stockedProducts.length}
           onPress={() => {
-            if (stockedProducts.length && requireLogin()) {
-              navigation.navigate('ProductDetail', {
-                product: stockedProducts[carouselIndex],
-              });
-            }
+            if (carouselProduct) handleOpenProduct(carouselProduct);
           }}
         >
-          {stockedProducts.length ? (
-            <>
-              <Image
-                source={getImageSource(
-                  stockedProducts[carouselIndex % stockedProducts.length].image ??
-                  stockedProducts[carouselIndex % stockedProducts.length].image_url
-                )}
-                style={styles.carouselImage}
-                resizeMode="cover"
-              />
-              <View style={styles.carouselCaption}>
-              </View>
-            </>
+          {stockedProducts.length && carouselProduct ? (
+            <Image
+              source={getImageSource(carouselProduct.image ?? carouselProduct.image_url)}
+              style={styles.carouselImage}
+              resizeMode="cover"
+            />
           ) : (
-            <Text style={styles.bannerSubtitle}>Nenhum produto em estoque</Text>
+            <Text style={styles.bannerSubtitle}>
+              {productsError ? 'Falha ao conectar à API' : 'Nenhum produto em estoque'}
+            </Text>
           )}
         </TouchableOpacity>
-
         <View style={styles.dotsRow}>
           <View style={[styles.dot, styles.dotActive]} />
           <View style={styles.dot} />
           <View style={styles.dot} />
         </View>
-
         <Text style={styles.sectionTitle}>Produtos em Destaque</Text>
-
         <View style={styles.gridContainer}>
-          {loading ? (
-            <ActivityIndicator color="#FFCC00" size="large" />
-          ) : products.length === 0 ? (
-            <Text style={styles.emptyText}>Nenhum produto cadastrado.</Text>
-          ) : (
-            products.map((item) => {
-              const productId = String(item.id);
-              const price = Number(item.price ?? item.preco ?? 0);
-              const stock = Number(item.stock ?? item.estoque ?? 0);
-              const isOutOfStock = stock === 0;
-              const currentSize = selectedSizes[productId] || 'M';
-              const currentQty = quantities[item.id] || (isOutOfStock ? 0 : 1);
-              const activePromotion = getActivePromotion(item);
-              const promotionalPrice = activePromotion
-                ? price * (1 - Number(activePromotion.discountPercentage) / 100)
-                : price;
-
-              return (
-                <View key={item.id} style={[styles.productCard, { width: cardWidth }]}>
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    onPress={() => requireLogin() && navigation.navigate('ProductDetail', { product: item })}
-                  >
-                    <Image
-                      source={getImageSource(item.image ?? item.image_url)}
-                      style={styles.productImage}
-                      resizeMode="cover"
-                    />
-                  </TouchableOpacity>
-
-                  <View style={styles.cardDetails}>
-                    <Text style={styles.productName} numberOfLines={2}>
-                      {item.name}
-                    </Text>
-
-                    <View style={styles.promotionSlot}>
-                      {activePromotion && (
-                        <Text style={styles.promotionText}>
-                          {Number(activePromotion.discountPercentage)}% OFF
-                        </Text>
-                      )}
-                    </View>
-
-                    {isOutOfStock ? (
-                      <Text style={styles.outOfStockText}>❌ Esgotado</Text>
-                    ) : (
-                      <Text style={styles.inStockText}>✅ Disp: {stock} un</Text>
-                    )}
-
-                    <Text style={styles.productDescription} numberOfLines={2}>
-                      {(item.description && item.description.trim() !== '')
-                        ? item.description
-                        : 'Camiseta unissex, fabricada em algodão'}
-                    </Text>
-
-                    <View style={styles.sizeRow}>
-                      {sortSizes(item.sizes || ['P', 'M', 'G', 'GG']).map((size) => {
-                        const sizeName = typeof size === 'string' ? size : size.size;
-                        const hasSizeInventory = item.sizes?.some((entry) => typeof entry !== 'string') ?? false;
-                        const sizeRecord = item.sizes?.find((entry) => typeof entry !== 'string' && entry.size === sizeName);
-                        const sizeStock = sizeRecord && typeof sizeRecord !== 'string'
-                          ? Number(sizeRecord.stock)
-                          : Number(item.stock ?? item.estoque ?? 0);
-                        const sizeUnavailable = hasSizeInventory && sizeStock <= 0;
-                        const isSelected = currentSize === sizeName;
-                        return (
-                          <TouchableOpacity
-                            key={sizeName}
-                            style={[
-                              styles.sizeBtn,
-                              isSelected && styles.sizeBtnSelected,
-                              sizeUnavailable && styles.sizeBtnDisabled,
-                            ]}
-                            onPress={() => handleSelectSize(productId, sizeName)}
-                            disabled={isOutOfStock}
-                          >
-                            <Text
-                              style={[
-                                styles.sizeBtnText,
-                                isSelected && styles.sizeBtnTextSelected,
-                              ]}
-                            >
-                              {sizeName}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    {selectedSizesTouched[productId] && item.sizes?.some((entry) => typeof entry !== 'string' && entry.size === currentSize && Number(entry.stock) <= 0) && (
-                      <Text style={styles.sizeUnavailableText}>Estoque indisponível para o tamanho {currentSize}.</Text>
-                    )}
-
-                    <View style={styles.cardFooter}>
-                      <View>
-                        {activePromotion && <Text style={styles.originalPrice}>R$ {price.toFixed(2).replace('.', ',')}</Text>}
-                        <Text style={styles.productPrice} numberOfLines={1}>
-                          R$ {promotionalPrice.toFixed(2).replace('.', ',')}
-                        </Text>
-                      </View>
-
-                      <View style={styles.actionsContainerMobile}>
-                        <View style={styles.qtyControlMobile}>
-                          <TouchableOpacity
-                            style={styles.qtyBtn}
-                            onPress={() => handleQuantityChange(productId, -1)}
-                            disabled={isOutOfStock}
-                          >
-                            <Text style={styles.qtyBtnText}>-</Text>
-                          </TouchableOpacity>
-
-                          <Text style={styles.qtyText}>{currentQty}</Text>
-
-                          <TouchableOpacity
-                            style={styles.qtyBtn}
-                            onPress={() => handleQuantityChange(productId, 1)}
-                            disabled={isOutOfStock}
-                          >
-                            <Text style={styles.qtyBtnText}>+</Text>
-                          </TouchableOpacity>
-                        </View>
-
-                        {isOutOfStock || (item.sizes?.some((entry) => typeof entry !== 'string' && entry.size === currentSize && Number(entry.stock) <= 0) ?? false) ? (
-                          <View style={[styles.buyBtnMobile, styles.buyBtnDisabled]}>
-                            <Text style={styles.buyBtnTextDisabled}>Indisponível</Text>
-                          </View>
-                        ) : (
-                          <TouchableOpacity
-                            style={styles.buyBtnMobile}
-                            onPress={() => handleBuy(item)}
-                          >
-                            <Text style={styles.buyBtnText}>Comprar</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              );
-            })
-          )}
+          {loading || productsError || products.length === 0
+            ? renderEmptyState()
+            : products.map((item) => (
+              <React.Fragment key={String(item.id)}>
+                {renderProduct({ item })}
+              </React.Fragment>
+            ))}
         </View>
       </ScrollView>
 
@@ -808,6 +867,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     width: '100%',
     paddingVertical: 24,
+  },
+  productLoadError: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  retryText: {
+    color: '#FFCC00',
+    fontWeight: 'bold',
+    padding: 12,
   },
   promotionText: {
     color: '#00E676',

@@ -40,11 +40,6 @@ export function AdminDashboardScreen() {
       const { data } = await api.get<{ products: AdminProduct[] } | AdminProduct[]>('products?limit=100');
       const productsFromApi = Array.isArray(data) ? data : data.products;
       setProducts(productsFromApi.filter((product) => product.isVisible !== false));
-      const storeResponse = await api.get<{ promotion?: ProductPromotion | null }>('promotions/store');
-      const storePromotion = storeResponse.data.promotion;
-      setStorePromotionDiscount(String(storePromotion?.discountPercentage ?? 0));
-      setStorePromotionValidFrom(storePromotion?.validFrom ? new Date(storePromotion.validFrom).toLocaleDateString('pt-BR') : '');
-      setStorePromotionValidUntil(storePromotion?.validUntil ? new Date(storePromotion.validUntil).toLocaleDateString('pt-BR') : '');
     } catch (error) {
       console.error('Erro ao carregar estoque:', error);
     } finally {

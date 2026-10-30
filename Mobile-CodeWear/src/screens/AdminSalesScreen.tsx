@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { memo, useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, TextInput, TouchableOpacity } from 'react-native';
 import { api } from '../services/api';
+import Toast from 'react-native-toast-message';
 
 interface SalesOrderItem {
   id: number;
@@ -22,17 +23,40 @@ interface SalesOrder {
   orderItems?: SalesOrderItem[];
 }
 
+const SalesOrderRow = memo(({ item }: { item: SalesOrder }) => (
+  <View style={styles.row}>
+    <Text style={styles.itemText}>Pedido #{item.id} - {item.User?.name || item.user?.name || 'Cliente'}</Text>
+    <Text style={styles.itemText}>{new Date(item.createdAt).toLocaleString('pt-BR')}</Text>
+    <Text style={styles.itemText} numberOfLines={1}>R$ {Number(item.totalValue || 0).toFixed(2).replace('.', ',')}</Text>
+    <Text style={styles.status}>{item.status}</Text>
+    {(item.OrderItems || item.orderItems || []).map((orderItem) => (
+      <Text style={styles.detail} key={orderItem.id}>
+        {orderItem.Product?.name || orderItem.product?.name || `Produto #${orderItem.productId}`} x {orderItem.quantity}{orderItem.size ? ` (${orderItem.size})` : ''}
+      </Text>
+    ))}
+  </View>
+));
+
 export function AdminSalesScreen() {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ totalRevenue: 0, totalUsers: 0, totalOrders: 0, dailyRevenue: 0, monthlyRevenue: 0, yearlyRevenue: 0 });
   const [filterDate, setFilterDate] = useState({ day: '', month: '', year: String(new Date().getFullYear()) });
+  const renderOrder = useCallback(({ item }: { item: SalesOrder }) => <SalesOrderRow item={item} />, []);
 
   useEffect(() => {
     loadDashboard();
     api.get<{ orders: SalesOrder[] }>('admin/all-orders?limit=50')
       .then(({ data }) => setOrders(data.orders ?? []))
-      .catch((error) => console.error('Erro ao carregar vendas:', error))
+      .catch((error: unknown) => {
+        console.error('Erro ao carregar vendas:', error);
+        const requestError = error as { response?: { data?: { message?: string } } };
+        Toast.show({
+          type: 'error',
+          text1: 'Erro ao carregar vendas',
+          text2: requestError.response?.data?.message ?? 'Não foi possível consultar os pedidos.',
+        });
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -43,7 +67,15 @@ export function AdminSalesScreen() {
       if (filterDate.day) params.set('day', filterDate.day);
       const { data } = await api.get(`admin/dashboard?${params.toString()}`);
       setStats(data);
-    } catch (error) { console.error('Erro ao carregar indicadores:', error); }
+    } catch (error: unknown) {
+      console.error('Erro ao carregar indicadores:', error);
+      const requestError = error as { response?: { data?: { message?: string } } };
+      Toast.show({
+        type: 'error',
+        text1: 'Erro ao carregar faturamento',
+        text2: requestError.response?.data?.message ?? 'Não foi possível consultar as métricas.',
+      });
+    }
   };
 
   return (
@@ -77,16 +109,12 @@ export function AdminSalesScreen() {
         <FlatList
           data={orders}
           keyExtractor={(item) => String(item.id)}
+          renderItem={renderOrder}
+          initialNumToRender={8}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews
           ListEmptyComponent={<Text style={styles.subtitle}>Nenhum pedido encontrado.</Text>}
-          renderItem={({ item }) => (
-            <View style={styles.row}>
-              <Text style={styles.itemText}>Pedido #{item.id} - {item.User?.name || item.user?.name || 'Cliente'}</Text>
-              <Text style={styles.itemText}>{new Date(item.createdAt).toLocaleString('pt-BR')}</Text>
-              <Text style={styles.itemText} numberOfLines={1}>R$ {Number(item.totalValue || 0).toFixed(2).replace('.', ',')}</Text>
-              <Text style={styles.status}>{item.status}</Text>
-              {(item.OrderItems || item.orderItems || []).map((orderItem) => <Text style={styles.detail} key={orderItem.id}>{orderItem.Product?.name || orderItem.product?.name || `Produto #${orderItem.productId}`} x {orderItem.quantity}{orderItem.size ? ` (${orderItem.size})` : ''}</Text>)}
-            </View>
-          )}
         />
       )}
     </View>
