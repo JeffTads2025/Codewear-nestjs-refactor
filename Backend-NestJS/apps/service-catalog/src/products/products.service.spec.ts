@@ -57,6 +57,30 @@ describe('ProductsService', () => {
     expect(databaseQuery).not.toHaveBeenCalled();
   });
 
+  it('finds a product by ID with sizes and promotions', async () => {
+    const product = { id: 8 } as Product;
+    const findByPk = vi.spyOn(Product, 'findByPk').mockResolvedValue(product);
+    const service = new ProductsService(Product, Promotion, createRedisMock());
+
+    await expect(service.findById(8)).resolves.toBe(product);
+    expect(findByPk).toHaveBeenCalledWith(8, {
+      include: [
+        { model: expect.any(Function), as: 'sizes' },
+        { model: expect.any(Function), as: 'promotions' },
+      ],
+    });
+  });
+
+  it('throws NotFoundException when a product ID does not exist', async () => {
+    vi.spyOn(Product, 'findByPk').mockResolvedValue(null);
+    const service = new ProductsService(Product, Promotion, createRedisMock());
+
+    await expect(service.findById(404)).rejects.toMatchObject({
+      status: 404,
+      response: { message: 'Produto não encontrado' },
+    });
+  });
+
   it('invalidates cached catalog pages after creating a product', async () => {
     const createdProduct = { id: 1 } as Product;
     vi.spyOn(Product, 'create').mockResolvedValue(createdProduct);

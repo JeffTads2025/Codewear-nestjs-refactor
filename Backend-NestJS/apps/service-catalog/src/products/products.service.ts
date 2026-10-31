@@ -85,6 +85,23 @@ export class ProductsService {
     }
   }
 
+  async findById(id: number) {
+    try {
+      const product = await this.products.findByPk(id, {
+        include: [
+          { model: ProductSize, as: 'sizes' },
+          { model: Promotion, as: 'promotions' },
+        ] as Includeable[],
+      });
+      if (!product) throw new NotFoundException('Produto não encontrado');
+      return product;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error(`Failed to find product #${id}`, error);
+      throw new InternalServerErrorException('Erro ao buscar produto');
+    }
+  }
+
   async create(input: CreateProductDto) {
     try {
       const product = await this.products.create({

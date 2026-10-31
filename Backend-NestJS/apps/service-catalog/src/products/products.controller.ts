@@ -30,6 +30,11 @@ export class ProductsController {
     return this.productsService.list(page, limit);
   }
 
+  @Get(':id')
+  findById(@Param('id', ParseIntPipe) id: number) {
+    return this.productsService.findById(id);
+  }
+
   @Post()
   @UseGuards(RolesGuard)
   @Roles('admin')
