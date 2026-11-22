@@ -115,7 +115,7 @@ A versão 2.0 evoluirá o sistema integrado atual para uma arquitetura modular u
 
 ### Operação atual
 
-O backend é executado a partir do diretório `Backend-CodeWear` e o aplicativo a partir de `Mobile-CodeWear`. A instalação das dependências e a inicialização devem seguir os scripts `npm` existentes em cada projeto. A porta padrão da API é 3000, e o aplicativo deve apontar para um endereço acessível pelo dispositivo ou emulador.
+A execução local atual usa os serviços NestJS definidos no `docker-compose.yml`; a API é acessada pela porta 8080 do Nginx. Para iniciar a stack, execute `docker compose up --build` na raiz do repositório. O aplicativo fica em `Mobile-CodeWear` e deve usar uma URL de API acessível pelo dispositivo ou emulador, configurada em `EXPO_PUBLIC_API_URL` quando necessário.
 
 ---
 

@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useState } from 'react';
+import React, { memo, useCallback, useState } from 'react';
 import {
   ScrollView,
   View,
@@ -202,7 +202,6 @@ export function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [productsError, setProductsError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [carouselIndex, setCarouselIndex] = useState(0);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
 
   const [selectedSizes, setSelectedSizes] = useState<{ [key: string]: string }>({});
@@ -244,14 +243,6 @@ export function HomeScreen() {
 
   const avatarUrl = getApiAssetUrl(profile?.avatarUrl);
   const avatarSource = avatarUrl ? { uri: avatarUrl } : undefined;
-
-  const stockedProducts = products.filter((product) => Number(product.stock ?? product.estoque ?? 0) > 0);
-
-  useEffect(() => {
-    if (stockedProducts.length < 2) return;
-    const timer = setInterval(() => setCarouselIndex((current) => (current + 1) % stockedProducts.length), 3500);
-    return () => clearInterval(timer);
-  }, [stockedProducts.length]);
 
   const handleSelectSize = useCallback((productId: string, size: string) => {
     setSelectedSizes((prev) => ({ ...prev, [productId]: size }));
@@ -374,8 +365,6 @@ export function HomeScreen() {
     return <Text style={styles.emptyText}>Nenhum produto cadastrado.</Text>;
   }, [loadProducts, loading, productsError]);
 
-  const carouselProduct = stockedProducts[carouselIndex % Math.max(stockedProducts.length, 1)];
-
   return (
     <SafeAreaView edges={['top']} style={styles.outerContainer}>
       <StatusBar backgroundColor="transparent" barStyle="light-content" translucent />
@@ -428,30 +417,6 @@ export function HomeScreen() {
         contentContainerStyle={[styles.container, styles.productListContent]}
         showsVerticalScrollIndicator={false}
       >
-        <TouchableOpacity
-          style={styles.carousel}
-          disabled={!stockedProducts.length}
-          onPress={() => {
-            if (carouselProduct) handleOpenProduct(carouselProduct);
-          }}
-        >
-          {stockedProducts.length && carouselProduct ? (
-            <Image
-              source={getImageSource(carouselProduct.image ?? carouselProduct.image_url)}
-              style={styles.carouselImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <Text style={styles.bannerSubtitle}>
-              {productsError ? 'Falha ao conectar à API' : 'Nenhum produto em estoque'}
-            </Text>
-          )}
-        </TouchableOpacity>
-        <View style={styles.dotsRow}>
-          <View style={[styles.dot, styles.dotActive]} />
-          <View style={styles.dot} />
-          <View style={styles.dot} />
-        </View>
         <Text style={styles.sectionTitle}>Produtos em Destaque</Text>
         <View style={styles.gridContainer}>
           {loading || productsError || products.length === 0
@@ -685,30 +650,6 @@ const styles = StyleSheet.create({
   menuText: {
     color: '#fff',
     fontSize: 16
-  },
-  carousel: { height: 180, borderRadius: 10, overflow: 'hidden', backgroundColor: '#161616', marginBottom: 24, position: 'relative', justifyContent: 'center', alignItems: 'center' },
-  carouselImage: { width: '100%', height: 180 },
-  carouselCaption: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 10, backgroundColor: 'rgba(0,0,0,0.62)' },
-  bannerSubtitle: {
-    color: '#888',
-    fontSize: 12,
-  },
-  dotsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 20,
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#333',
-  },
-  dotActive: {
-    width: 16,
-    backgroundColor: '#FFCC00',
   },
   sectionTitle: {
     color: '#FFF',
