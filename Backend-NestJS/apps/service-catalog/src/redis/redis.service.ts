@@ -47,5 +47,5 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       if (result.keys.length) await this.client.del(result.keys);
       cursor = result.cursor;
     } while (cursor !== '0');
-  }
+  } 
 }

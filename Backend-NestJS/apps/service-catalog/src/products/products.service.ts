@@ -4,8 +4,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/sequelize';
-import { Includeable } from 'sequelize';
+import { InjectConnection, InjectModel } from '@nestjs/sequelize';
+import { Includeable, Sequelize } from 'sequelize';
 import { RedisService } from '../redis/redis.service.js';
 import { CreateProductDto } from './dto/create-product.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
@@ -24,7 +24,9 @@ export class ProductsService {
 
   constructor(
     @InjectModel(Product) private readonly products: typeof Product,
+    @InjectModel(ProductSize) private readonly productSizes: typeof ProductSize,
     @InjectModel(Promotion) private readonly promotions: typeof Promotion,
+    @InjectConnection() private readonly database: Sequelize,
     private readonly redis: RedisService,
   ) {}
 
@@ -103,6 +105,8 @@ export class ProductsService {
   }
 
   async create(input: CreateProductDto) {
+    const transaction = await this.database.transaction();
+    let committed = false;
     try {
       const product = await this.products.create({
         name: input.name,
@@ -111,24 +115,94 @@ export class ProductsService {
         category: input.category,
         stock: input.stock,
         image_url: input.image_url,
-      });
+      }, { transaction });
+      if (input.sizes) {
+        await this.productSizes.bulkCreate(
+          input.sizes.map((size) => ({
+            size: size.size,
+            stock: size.stock,
+            productId: product.id,
+          })),
+          { transaction },
+        );
+      }
+      if (input.promotions) {
+        await this.promotions.bulkCreate(
+          input.promotions.map((promotion) => ({
+            discountPercentage: promotion.discountPercentage,
+            validFrom: promotion.validFrom,
+            validUntil: promotion.validUntil,
+            isActive: promotion.isActive,
+            productId: product.id,
+            code: null,
+          })),
+          { transaction },
+        );
+      }
+      await transaction.commit();
+      committed = true;
       await this.invalidateCache();
-      return { message: 'Produto criado com sucesso', product };
+      return {
+        message: 'Produto criado com sucesso',
+        product: await this.findById(product.id),
+      };
     } catch (error) {
+      if (!committed) await transaction.rollback();
       this.logger.error('Failed to create product', error);
       throw new InternalServerErrorException('Erro ao criar produto');
     }
   }
 
   async update(id: number, input: UpdateProductDto) {
+    const transaction = await this.database.transaction();
+    let committed = false;
     try {
-      const product = await this.products.findByPk(id);
+      const product = await this.products.findByPk(id, { transaction });
       if (!product) throw new NotFoundException('Produto não encontrado');
 
-      await product.update(input);
+      const { sizes, promotions, ...productFields } = input;
+      await product.update(productFields, { transaction });
+      if (sizes) {
+        await this.productSizes.destroy({ where: { productId: id }, transaction });
+        if (sizes.length) {
+          await this.productSizes.bulkCreate(
+            sizes.map((size) => ({
+              size: size.size,
+              stock: size.stock,
+              productId: id,
+            })),
+            { transaction },
+          );
+        }
+      }
+      if (promotions) {
+        await this.promotions.destroy({
+          where: { productId: id },
+          transaction,
+        });
+        if (promotions.length) {
+          await this.promotions.bulkCreate(
+            promotions.map((promotion) => ({
+              discountPercentage: promotion.discountPercentage,
+              validFrom: promotion.validFrom,
+              validUntil: promotion.validUntil,
+              isActive: promotion.isActive,
+              productId: id,
+              code: null,
+            })),
+            { transaction },
+          );
+        }
+      }
+      await transaction.commit();
+      committed = true;
       await this.invalidateCache();
-      return { message: 'Produto atualizado com sucesso', product };
+      return {
+        message: 'Produto atualizado com sucesso',
+        product: await this.findById(id),
+      };
     } catch (error) {
+      if (!committed) await transaction.rollback();
       if (error instanceof NotFoundException) throw error;
       this.logger.error('Failed to update product', error);
       throw new InternalServerErrorException('Erro ao atualizar produto');
