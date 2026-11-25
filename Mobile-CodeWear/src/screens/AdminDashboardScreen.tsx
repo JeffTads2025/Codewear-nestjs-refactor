@@ -1,10 +1,11 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Modal, ActivityIndicator, Image } from 'react-native';
 import { api } from '../services/api';
 import Toast from 'react-native-toast-message';
 import { sortSizes } from '../utils/sizes';
 import { Product } from '../data/products';
 import { useFocusEffect } from '@react-navigation/native';
+import { useAuth } from '../context/AuthContext';
 
 type StockSize = { id?: number; size: string; stock: number | string };
 type ProductPromotion = { id?: number; productId?: number | null; discountPercentage: number | string; validFrom?: string; validUntil?: string; isActive: boolean };
@@ -19,6 +20,8 @@ type AdminProduct = Omit<Product, 'id' | 'name' | 'price' | 'stock' | 'sizes' | 
 };
 
 export function AdminDashboardScreen() {
+  const { isAuthenticated, user } = useAuth();
+  const isAdmin = isAuthenticated && user?.role === 'admin';
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [stock, setStock] = useState('');
@@ -35,6 +38,7 @@ export function AdminDashboardScreen() {
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [savingProductId, setSavingProductId] = useState<number | null>(null);
   const [hidingProductId, setHidingProductId] = useState<number | null>(null);
+  const [productPendingRemoval, setProductPendingRemoval] = useState<AdminProduct | null>(null);
 
   const loadProducts = useCallback(async () => {
     try {
@@ -49,8 +53,9 @@ export function AdminDashboardScreen() {
   }, []);
 
   useFocusEffect(useCallback(() => {
+    if (!isAdmin) return;
     void loadProducts();
-  }, [loadProducts]));
+  }, [isAdmin, loadProducts]));
 
   const formatDateBRtoISO = (value: string) => {
     const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
@@ -162,15 +167,11 @@ export function AdminDashboardScreen() {
     }
   };
 
-  const confirmHideProduct = (product: AdminProduct) => {
-    Alert.alert(
-      'Remover do estoque?',
-      'O produto deixará de aparecer no estoque e na vitrine. Pedidos anteriores serão preservados.',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Remover', style: 'destructive', onPress: () => void hideProduct(product) },
-      ]
-    );
+  const confirmHideProduct = () => {
+    if (!productPendingRemoval) return;
+    const product = productPendingRemoval;
+    setProductPendingRemoval(null);
+    void hideProduct(product);
   };
 
   const handleCreateProduct = async () => {
@@ -192,6 +193,7 @@ export function AdminDashboardScreen() {
           isActive: true,
         }] : [],
       });
+      await loadProducts();
       Toast.show({ type: 'success', text1: 'Sucesso', text2: `Produto "${name}" cadastrado!` });
       setName(''); setPrice(''); setStock(''); setImageUrl(''); setPromotionDiscount('0'); setPromotionValidFrom(''); setPromotionValidUntil(''); setSizeStocks({ P: '', M: '', G: '', GG: '' });
     } catch (error: unknown) {
@@ -200,9 +202,18 @@ export function AdminDashboardScreen() {
     }
   };
 
+  if (!isAdmin) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.headerTitle}>Acesso restrito a administradores.</Text>
+      </View>
+    );
+  }
+
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.headerTitle}>Painel de Gestão</Text>
+    <>
+      <ScrollView style={styles.container}>
+        <Text style={styles.headerTitle}>Painel de Gestão</Text>
 
       <View style={styles.cardBox}>
         <Text style={styles.yellowTitle}>Promoção Geral da Loja</Text>
@@ -321,7 +332,7 @@ export function AdminDashboardScreen() {
             <TouchableOpacity style={styles.stockButton} disabled={savingProductId === product.id} onPress={() => updateStock(product)}>
               <Text style={styles.submitText}>{savingProductId === product.id ? 'Salvando...' : 'Atualizar'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.removeButton} disabled={hidingProductId === product.id} onPress={() => confirmHideProduct(product)}>
+            <TouchableOpacity style={styles.removeButton} disabled={hidingProductId === product.id} onPress={() => setProductPendingRemoval(product)}>
               <Text style={styles.submitText}>{hidingProductId === product.id ? 'Removendo...' : 'Remover do estoque'}</Text>
             </TouchableOpacity>
           </View>
@@ -329,7 +340,37 @@ export function AdminDashboardScreen() {
 
         );
       })}
-    </ScrollView>
+      </ScrollView>
+      <Modal
+        transparent
+        visible={productPendingRemoval !== null}
+        animationType="fade"
+        onRequestClose={() => setProductPendingRemoval(null)}
+      >
+        <View style={styles.confirmationOverlay}>
+          <View style={styles.confirmationCard}>
+            <Text style={styles.sectionTitle}>Remover do estoque?</Text>
+            <Text style={styles.confirmationMessage}>
+              {`"${productPendingRemoval?.name ?? ''}" deixará de aparecer no estoque e na vitrine. Pedidos anteriores serão preservados.`}
+            </Text>
+            <View style={styles.confirmationActions}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setProductPendingRemoval(null)}
+              >
+                <Text style={styles.submitText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.removeButton}
+                onPress={confirmHideProduct}
+              >
+                <Text style={styles.submitText}>Remover</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -357,4 +398,9 @@ const styles = StyleSheet.create({
   sizeInput: { flex: 1, backgroundColor: '#0d0d0d', borderWidth: 1, borderColor: '#2b2b2b', color: '#fff', borderRadius: 6, padding: 10 },
   stockButton: { backgroundColor: '#0080ff', borderRadius: 6, padding: 12, alignItems: 'center', marginTop: 14 },
   removeButton: { backgroundColor: '#b42318', borderRadius: 6, padding: 12, alignItems: 'center', marginTop: 8 },
+  confirmationOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.7)', padding: 24 },
+  confirmationCard: { width: '100%', maxWidth: 420, backgroundColor: '#161616', borderRadius: 10, borderWidth: 1, borderColor: '#333', padding: 20 },
+  confirmationMessage: { color: '#ccc', lineHeight: 21 },
+  confirmationActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 20 },
+  cancelButton: { backgroundColor: '#444', borderRadius: 6, padding: 12, alignItems: 'center', marginTop: 8 },
 });
