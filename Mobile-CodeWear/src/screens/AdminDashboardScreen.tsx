@@ -8,11 +8,12 @@ import { useFocusEffect } from '@react-navigation/native';
 
 type StockSize = { id?: number; size: string; stock: number | string };
 type ProductPromotion = { id?: number; productId?: number | null; discountPercentage: number | string; validFrom?: string; validUntil?: string; isActive: boolean };
-type AdminProduct = Omit<Product, 'id' | 'name' | 'price' | 'stock' | 'sizes' | 'promotions'> & {
+type AdminProduct = Omit<Product, 'id' | 'name' | 'price' | 'stock' | 'sizes' | 'promotions' | 'image_url'> & {
   id: number;
   name: string;
   price: number | string;
   stock: number | string;
+  image_url?: string | null;
   sizes?: StockSize[];
   promotions?: ProductPromotion[];
 };
@@ -40,11 +41,6 @@ export function AdminDashboardScreen() {
       const { data } = await api.get<{ products: AdminProduct[] } | AdminProduct[]>('products?limit=100');
       const productsFromApi = Array.isArray(data) ? data : data.products;
       setProducts(productsFromApi.filter((product) => product.isVisible !== false));
-      const storeResponse = await api.get<{ promotion?: ProductPromotion | null }>('promotions/store');
-      const storePromotion = storeResponse.data.promotion;
-      setStorePromotionDiscount(String(storePromotion?.discountPercentage ?? 0));
-      setStorePromotionValidFrom(storePromotion?.validFrom ? new Date(storePromotion.validFrom).toLocaleDateString('pt-BR') : '');
-      setStorePromotionValidUntil(storePromotion?.validUntil ? new Date(storePromotion.validUntil).toLocaleDateString('pt-BR') : '');
     } catch (error) {
       console.error('Erro ao carregar estoque:', error);
     } finally {
@@ -111,6 +107,7 @@ export function AdminDashboardScreen() {
         name: product.name,
         price: Math.max(0, Number(product.price) || 0),
         description: product.description,
+        image_url: product.image_url?.trim() || null,
         stock: getTotalStock(getStockSizes(product)),
         sizes: sortSizes(getStockSizes(product)).map((size) => ({
           size: size.size,
@@ -274,7 +271,7 @@ export function AdminDashboardScreen() {
         const stockSizes = sortSizes(getStockSizes(product));
         return (
           <View style={styles.stockCard} key={product.id}>
-            <View style={styles.productHeader}><Image source={{ uri: product.image_url }} style={styles.stockImage} /><Text style={styles.productTitle}>{product.name}</Text></View>
+            <View style={styles.productHeader}><Image source={{ uri: product.image_url || undefined }} style={styles.stockImage} /><Text style={styles.productTitle}>{product.name}</Text></View>
             <Text style={Number(product.stock) > 0 ? styles.inStock : styles.outOfStock}>
               {Number(product.stock) > 0 ? 'Em estoque' : 'Esgotado'}
             </Text>
@@ -284,6 +281,16 @@ export function AdminDashboardScreen() {
             <TextInput style={styles.input} value={String(product.name || '')} onChangeText={(value) => setProducts((current) => current.map((item) => item.id === product.id ? { ...item, name: value } : item))} />
             <Text style={styles.label}>Descrição</Text>
             <TextInput style={styles.input} value={String(product.description || '')} onChangeText={(value) => setProducts((current) => current.map((item) => item.id === product.id ? { ...item, description: value } : item))} multiline />
+            <Text style={styles.label}>URL da Imagem</Text>
+            <TextInput
+              style={styles.input}
+              value={product.image_url ?? ''}
+              onChangeText={(value) => setProducts((current) => current.map((item) => item.id === product.id ? { ...item, image_url: value } : item))}
+              placeholder="https://..."
+              placeholderTextColor="#555"
+              autoCapitalize="none"
+              keyboardType="url"
+            />
             <Text style={styles.label}>Preço</Text>
             <TextInput style={styles.input} keyboardType="numeric" value={String(product.price || 0)} onChangeText={(value) => setProducts((current) => current.map((item) => item.id === product.id ? { ...item, price: value } : item))} />
             <Text style={styles.label}>Desconto (%)</Text>

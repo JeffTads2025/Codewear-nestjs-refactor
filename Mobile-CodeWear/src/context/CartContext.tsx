@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
 import { Product } from '../data/products';
 import { useAuth } from './AuthContext';
 import { api } from '../services/api';
+import Toast from 'react-native-toast-message';
 
 function getActivePromotion(product: Product) {
   const now = new Date();
@@ -27,6 +28,9 @@ export interface CartItem {
 
 interface CartContextData {
   cartItems: CartItem[];
+  cartLoading: boolean;
+  cartError: string | null;
+  reloadCart: () => void;
   addToCart: (product: Product, size: string, quantity: number) => Promise<void>;
   removeFromCart: (productId: string, size: string) => Promise<void>;
   updateQuantity: (productId: string, size: string, delta: number) => Promise<void>;
@@ -51,15 +55,26 @@ const CartContext = createContext<CartContextData>({} as CartContextData);
 
 export function CartProvider({ children }: CartProviderProps) {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [cartLoading, setCartLoading] = useState(true);
+  const [cartError, setCartError] = useState<string | null>(null);
+  const [cartRequest, setCartRequest] = useState(0);
   const { user, isAuthenticated } = useAuth();
+
+  const reloadCart = useCallback(() => {
+    setCartRequest((request) => request + 1);
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
       setCartItems([]);
+      setCartError(null);
+      setCartLoading(false);
       return;
     }
 
     let active = true;
+    setCartLoading(true);
+    setCartError(null);
     api.get('cart').then(({ data }) => {
       if (!active) return;
       const serverItems: ServerCartItem[] = Array.isArray(data) ? data : data.items ?? [];
@@ -76,12 +91,25 @@ export function CartProvider({ children }: CartProviderProps) {
       }).filter((item): item is CartItem => item !== null);
 
       setCartItems(mappedItems);
-    }).catch(() => {
-      if (active) setCartItems([]);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      console.error('Não foi possível carregar o carrinho:', error);
+      const requestError = error as { response?: { data?: { message?: string } } };
+      setCartError(
+        requestError.response?.data?.message
+          ?? 'Falha de conexão ao carregar o carrinho. Tente novamente.',
+      );
+      Toast.show({
+        type: 'error',
+        text1: 'Erro ao carregar carrinho',
+        text2: requestError.response?.data?.message ?? 'Não foi possível consultar seu carrinho.',
+      });
+    }).finally(() => {
+      if (active) setCartLoading(false);
     });
 
     return () => { active = false; };
-  }, [isAuthenticated, user?.id]);
+  }, [cartRequest, isAuthenticated, user?.id]);
 
   const addToCart = async (product: Product, size: string, quantity: number) => {
     const { data } = await api.post<{ id: number }>('cart', {
@@ -104,6 +132,7 @@ export function CartProvider({ children }: CartProviderProps) {
 
       return [...prev, { id: data.id, product, size, quantity }];
     });
+    setCartError(null);
   };
 
   const removeFromCart = async (productId: string, size: string) => {
@@ -158,6 +187,9 @@ export function CartProvider({ children }: CartProviderProps) {
     <CartContext.Provider
       value={{
         cartItems,
+        cartLoading,
+        cartError,
+        reloadCart,
         addToCart,
         removeFromCart,
         updateQuantity,

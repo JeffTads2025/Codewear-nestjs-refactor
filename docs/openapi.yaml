@@ -1,0 +1,503 @@
+openapi: 3.1.0
+info:
+  title: CodeWear API
+  version: 1.0.0
+  description: |
+    OpenAPI documentation for the implemented catalog and orders endpoints
+    exposed through the Nginx gateway.
+
+    Route audit: the catalog controller currently exposes POST /login (not
+    POST /auth/login). Product lookup by ID is exposed as GET /products/{id}.
+servers:
+  - url: http://localhost:8080
+    description: Nginx gateway in the local Docker Compose environment
+tags:
+  - name: Catalog
+    description: Product catalog and authentication
+  - name: Orders
+    description: User cart, checkout, and order history
+paths:
+  /products:
+    get:
+      tags: [Catalog]
+      operationId: listProducts
+      summary: List visible products
+      description: Returns a paginated catalog, including sizes and promotions.
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 10
+      responses:
+        '200':
+          description: Product page returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /products/{id}:
+    get:
+      tags: [Catalog]
+      operationId: getProductById
+      summary: Get a product by ID
+      description: Returns a product with its sizes and promotions.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Product found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          description: Product ID is not a valid integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Product not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /login:
+    post:
+      tags: [Catalog]
+      operationId: login
+      summary: Authenticate a user
+      description: |
+        The implemented route is POST /login. It returns a signed JWT and
+        the authenticated user's profile fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '201':
+          description: Authentication succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Account is inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /cart:
+    get:
+      tags: [Orders]
+      operationId: getCart
+      summary: Get the authenticated user's cart
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cart items returned
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CartItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Orders]
+      operationId: addCartItem
+      summary: Add a product to the authenticated user's cart
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddCartItemRequest'
+      responses:
+        '201':
+          description: Cart item created or quantity increased
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CartItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Product not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /checkout:
+    post:
+      tags: [Orders]
+      operationId: checkout
+      summary: Complete checkout for the authenticated user's cart
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutRequest'
+      responses:
+        '201':
+          description: Checkout completed and order created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, orderId]
+                properties:
+                  message:
+                    type: string
+                    example: Compra realizada com sucesso
+                  orderId:
+                    type: integer
+        '400':
+          description: Cart is empty or product stock is insufficient
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: Checkout or event publication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /orders:
+    get:
+      tags: [Orders]
+      operationId: listOrders
+      summary: List the authenticated user's orders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Paginated order history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [orders, totalPages]
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+                  totalPages:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing, expired, or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+        path:
+          type: string
+        message:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+      required: [statusCode, timestamp, path, message]
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    LoginResponse:
+      type: object
+      required: [message, token, user]
+      properties:
+        message:
+          type: string
+          example: Login realizado!
+        token:
+          type: string
+          description: Signed JWT, valid for one day.
+        user:
+          type: object
+          required: [id, name, email, cpf, role]
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            email:
+              type: string
+              format: email
+            cpf:
+              type: string
+            role:
+              type: string
+              enum: [admin, client]
+            phone:
+              type: string
+              nullable: true
+            address:
+              type: string
+              nullable: true
+            avatarUrl:
+              type: string
+              nullable: true
+    ProductPage:
+      type: object
+      required: [products, totalPages, total]
+      properties:
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        totalPages:
+          type: integer
+        total:
+          type: integer
+    Product:
+      type: object
+      required: [id, name, price, stock, isVisible]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        price:
+          type: number
+          format: double
+        description:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        stock:
+          type: integer
+        image_url:
+          type: string
+          nullable: true
+        isVisible:
+          type: boolean
+        sizes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductSize'
+        promotions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Promotion'
+    ProductSize:
+      type: object
+      properties:
+        id:
+          type: integer
+        productId:
+          type: integer
+        size:
+          type: string
+        stock:
+          type: integer
+    Promotion:
+      type: object
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+          nullable: true
+        discountPercentage:
+          type: number
+        validFrom:
+          type: string
+          format: date-time
+          nullable: true
+        validUntil:
+          type: string
+          format: date-time
+          nullable: true
+        isActive:
+          type: boolean
+        productId:
+          type: integer
+          nullable: true
+    AddCartItemRequest:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: integer
+          minimum: 1
+        quantity:
+          type: integer
+          minimum: 1
+        size:
+          type: string
+    CartItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        productId:
+          type: integer
+        quantity:
+          type: integer
+        size:
+          type: string
+          nullable: true
+        Product:
+          $ref: '#/components/schemas/CartProduct'
+    CartProduct:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        price:
+          type: number
+        image_url:
+          type: string
+          nullable: true
+        stock:
+          type: integer
+    CheckoutRequest:
+      type: object
+      required: [paymentMethod, address]
+      properties:
+        paymentMethod:
+          type: string
+          minLength: 1
+        address:
+          type: string
+          minLength: 1
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+        totalValue:
+          type: number
+          format: double
+        status:
+          type: string
+          example: pago
+        paymentMethod:
+          type: string
+        address:
+          type: string
+        userId:
+          type: integer
+        OrderItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+    OrderItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        quantity:
+          type: integer
+        priceAtPurchase:
+          type: number
+          format: double
+        orderId:
+          type: integer
+        productId:
+          type: integer
+        size:
+          type: string
+          nullable: true
