@@ -8,6 +8,7 @@ import {
 import { InjectConnection } from '@nestjs/sequelize';
 import { QueryTypes, Sequelize } from 'sequelize';
 import { Roles } from './roles.decorator.js';
+import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { RolesGuard } from './roles.guard.js';
 
 interface AuditLogRow {
@@ -20,7 +21,7 @@ interface AuditLogRow {
 }
 
 @Controller('admin')
-@UseGuards(RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin')
 export class AdminAuditController {
   constructor(@InjectConnection() private readonly database: Sequelize) {}

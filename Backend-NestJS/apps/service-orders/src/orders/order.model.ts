@@ -3,15 +3,12 @@ import {
   Column,
   DataType,
   Default,
-  BelongsTo,
-  ForeignKey,
   HasMany,
   Model,
   PrimaryKey,
   Table,
 } from 'sequelize-typescript';
 import { OrderItem } from './order-item.model.js';
-import { User } from './user.model.js';
 
 @Table({ tableName: 'orders', timestamps: true })
 export class Order extends Model {
@@ -33,13 +30,10 @@ export class Order extends Model {
   @Column({ type: DataType.TEXT, allowNull: false })
   declare address: string;
 
-  @ForeignKey(() => User)
   @Column({ type: DataType.INTEGER, allowNull: false })
   declare userId: number;
 
   @HasMany(() => OrderItem, { foreignKey: 'orderId', as: 'OrderItems' })
   declare OrderItems: OrderItem[];
 
-  @BelongsTo(() => User, { foreignKey: 'userId', as: 'User' })
-  declare User: User;
 }

@@ -45,6 +45,8 @@ describe('AuthService', () => {
     });
     expect(jwt.verify(result.token, 'test-secret')).toMatchObject({
       id: 8,
+      name: 'Test User',
+      email: 'test@example.com',
       role: 'client',
     });
     expect(result.user).not.toHaveProperty('password');

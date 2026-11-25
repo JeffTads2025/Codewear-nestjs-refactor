@@ -10,13 +10,12 @@
 
 ![C2 Containers](diagramas/c2-containers.png)
 
-> **Portas em execução:** o diagrama C2 acima registra as portas solicitadas na
-> rubrica. No `docker-compose.yml` e na configuração Nginx atuais, o gateway
-> publica/escuta `8080:8080`, o Service Catalog escuta `3000` e o Service Orders
-> escuta `3001`. MySQL (`3306`) e Redis (`6379`) são acessíveis somente na rede
-> interna do Compose. Os dois microsserviços atualmente usam a mesma instância
-> e o mesmo banco MySQL; a separação de domínio é feita no nível dos serviços,
-> não por bancos fisicamente isolados.
+> **Portas e dados:** Nginx publica `8080:8080`; Service Catalog escuta `3000`
+> e Service Orders `3001`. MySQL e Redis não publicam portas no host. O Compose
+> executa instâncias MySQL isoladas para `codewear_catalog` e `codewear_orders`,
+> cada uma com seu volume persistente. O banco legado `codewear` e seu volume
+> permanecem como backup/fallback; a restauração dos dumps separados é descrita
+> no runbook.
 
 ## 2. ADRs
 
@@ -31,11 +30,10 @@
 - **Decisão:** Separar a aplicação em `service-catalog` e `service-orders`,
   ambos implementados com NestJS. Usar Redis Pub/Sub para comunicação assíncrona
   por eventos entre os serviços, incluindo `order_created`.
-- **Consequências:** A separação favorece independência de deploy e escalabilidade
-  dos serviços. A complexidade adicional de execução é gerenciada com Docker
-  Compose, que orquestra os serviços e a infraestrutura compartilhada. Como os
-  dois serviços ainda usam o mesmo banco MySQL, o isolamento de dados permanece
-  lógico e não elimina todo o acoplamento no schema.
+- **Consequências:** Os serviços usam schemas MySQL separados; Orders acessa
+  usuários, produtos e estoque somente por endpoints internos autenticados do
+  Catalog. O Nginx bloqueia o prefixo `/internal/`, e a rede do Compose não
+  publica portas dos serviços ou do banco no host.
 
 ### ADR 002 — Escolha de Armazenamento e Persistência de Dados
 
@@ -43,15 +41,29 @@
 - **Contexto e problema:** A aplicação precisa armazenar dados relacionais
   estruturados — como produtos, pedidos e usuários — com suporte a transações
   ACID, além de um mecanismo de alta velocidade para cache e eventos assíncronos.
-- **Decisão:** Adotar **MySQL 8.0** como banco relacional para a persistência
-  principal de `service-catalog` e `service-orders`. Adotar **Redis 7** como
-  camada de cache-aside para consultas de produtos e como broker Pub/Sub para a
-  comunicação assíncrona do evento `order_created`.
-- **Consequências:** As transações do checkout mantêm consistência ao criar o
-  pedido e seus itens e atualizar o estoque; o cache Redis pode acelerar
-  consultas de produtos. Como trade-off, os microsserviços compartilham
-  atualmente a mesma instância e o mesmo banco MySQL, com separação lógica por
-  domínio. Isso exige governança para evitar acoplamento no schema e nos dados.
+- **Decisão:** Adotar instâncias isoladas de **MySQL 8.0** para
+  `codewear_catalog` e `codewear_orders`, com volumes persistentes separados, e
+  **Redis 7** para cache-aside das listagens de catálogo e Pub/Sub do evento
+  `order_created`.
+- **Consequências:** Checkout reserva estoque no Catalog e cria o pedido no
+  Orders; em caso de falha de persistência, Orders solicita o estorno da
+  reserva. `order_items` conserva snapshots de nome, imagem, tamanho e preço,
+  sem depender de joins com o catálogo para consultar o histórico. Como a
+  reserva e a gravação do pedido usam bancos distintos, o fluxo é uma saga
+  compensatória, não uma transação ACID distribuída.
+
+## Cache Redis atual
+
+- Apenas `GET /products` usa cache Redis, no formato
+  `catalog:products:page:{page}:limit:{limit}`.
+- O valor é JSON da resposta paginada: produtos visíveis com tamanhos e
+  promoções, além de `totalPages` e `total`.
+- O TTL é `max(1, Number(CACHE_TTL_SECONDS) || 60)` segundos: por padrão, 60
+  segundos; valor inválido ou zero usa 60, e valores negativos resultam em 1.
+- Criação, edição, exclusão lógica e reserva/estorno de estoque invalidam as
+  chaves `catalog:products:*`.
+- Usuários, perfis, endereços, carrinhos e pedidos não são armazenados em cache.
+  `order_created` é uma mensagem Redis Pub/Sub, não uma chave com TTL.
 
 ## 3. Quality scenarios
 
@@ -126,19 +138,21 @@ de domínio ou alterações ao código.
   status tem valor padrão `pendente`; o checkout define `pago`. O campo é uma
   string, sem enum nem regras de transição implementadas no model.
 - **`OrderItem`:** model da tabela `order_items`; possui `id`, `quantity`,
-  `priceAtPurchase`, `orderId`, `productId` e `size`.
+  `priceAtPurchase`, `orderId`, `productId`, `size`, `productName` e
+  `productImageUrl`. Os campos do produto são snapshots e os IDs não são FKs
+  para o schema Catalog.
 - **`Cart`:** model da tabela `carts`; possui `id`, `quantity` (padrão `1`),
   `userId`, `productId` e `size`. Cada linha associa um usuário a um produto.
-- **`Product`:** model da tabela `products`; possui `id`, `name`, `price`,
-  `description`, `category`, `stock`, `image_url` e `isVisible`.
+- **`Product`:** entidade do schema Catalog; Orders consulta dados correntes
+  pelo endpoint interno e não declara um model Sequelize para produtos.
 - **`ProductSize`:** model da tabela `product_sizes`; possui `id`, `productId`,
   `size` e `stock`.
 - **`Promotion`:** model da tabela `promotions`; possui `id`, `code`,
   `discountPercentage`, `validFrom`, `validUntil`, `isActive` e `productId`.
 - **`User`:** model de autenticação/perfil em `service-catalog`, com `id`,
   `name`, `email`, `cpf`, `password`, `role`, `phone`, `address`, `avatarUrl` e
-  `isActive`. `service-orders` também declara um model `User` reduzido a `id` e
-  `name`/`email` para suas associações.
+  `isActive`. Orders valida a situação do usuário por endpoint interno; não
+  persiste dados cadastrais em Redis nem declara um model User.
 
 #### Value Objects (Objetos de Valor)
 
@@ -174,11 +188,11 @@ SLO configurado no projeto.
    backoff exponencial. Se a leitura do cache falhar, `GET /products` registra
    um aviso e consulta o MySQL; falhas ao gravar o cache também são registradas
    sem impedir a resposta da consulta.
-2. **Transação de checkout:** criação de `Order` e `OrderItem`, decremento do
-   estoque e remoção dos itens do carrinho ocorrem numa transação Sequelize.
-   Erros durante essas operações provocam rollback. A publicação Pub/Sub ocorre
-   após o commit; se ela falhar, o pedido permanece persistido e a API retorna
-   erro, sem outbox ou fallback durável.
+2. **Checkout entre serviços:** Catalog valida o usuário e reserva estoque em
+   transação no seu schema. Orders grava pedido/itens e limpa o carrinho em
+   transação local; se essa gravação falhar, tenta estornar todas as reservas.
+   Essa compensação não substitui uma transação distribuída/outbox e depende de
+   que o Catalog esteja disponível para executar o estorno.
 3. **Timeouts do Nginx:** não há diretivas de timeout de proxy configuradas no
    `nginx.conf` atual. Portanto, timeouts rigorosos de leitura/escrita não são
    uma proteção implementada neste momento.
@@ -206,7 +220,8 @@ SLO configurado no projeto.
 - O código registra logs operacionais, mas não inclui atualmente um exportador
   de métricas ou dashboard para taxas HTTP 5xx, percentis de latência ou taxa de
   sucesso de checkout.
-- Docker Compose define health checks para `mysql` e `redis`; não define
+- Docker Compose define health checks para `mysql-catalog`, `mysql-orders` e
+  `redis`; não define
   health checks para `service-catalog`, `service-orders` ou `nginx`.
 - Consumo de CPU e memória dos contêineres pode ser inspecionado pelas
   ferramentas do Docker, mas não há coleta ou monitoramento contínuo desses

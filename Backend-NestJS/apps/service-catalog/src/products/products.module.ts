@@ -3,6 +3,7 @@ import { SequelizeModule } from '@nestjs/sequelize';
 import { Product } from './product.model.js';
 import { ProductSize } from './product-size.model.js';
 import { Promotion } from './promotion.model.js';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/roles.guard.js';
 import { ProductsController } from './products.controller.js';
 import { ProductsService } from './products.service.js';
@@ -10,6 +11,6 @@ import { ProductsService } from './products.service.js';
 @Module({
   imports: [SequelizeModule.forFeature([Product, ProductSize, Promotion])],
   controllers: [ProductsController],
-  providers: [ProductsService, RolesGuard],
+  providers: [ProductsService, JwtAuthGuard, RolesGuard],
 })
 export class ProductsModule {}

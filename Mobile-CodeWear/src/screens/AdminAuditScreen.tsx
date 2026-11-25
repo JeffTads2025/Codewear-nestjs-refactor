@@ -5,9 +5,10 @@ import Toast from 'react-native-toast-message';
 
 interface AuditLogEntry {
   id: number;
+  adminId: number;
   action: string;
-  adminName?: string;
-  details: string;
+  adminName: string | null;
+  details: string | null;
   createdAt: string;
 }
 
@@ -21,7 +22,7 @@ const auditActionLabels: Record<string, string> = {
 const AuditLogRow = memo(({ item }: { item: AuditLogEntry }) => (
   <View style={styles.row}>
     <Text style={styles.action}>{auditActionLabels[item.action] ?? item.action}</Text>
-    <Text style={styles.subtitle}>Por: {item.adminName || 'Administrador'}</Text>
+    <Text style={styles.subtitle}>Por: {item.adminName || 'Administrador'} (ID {item.adminId})</Text>
     <Text style={styles.subtitle}>{item.details}</Text>
     <Text style={styles.date}>{new Date(item.createdAt).toLocaleString('pt-BR')}</Text>
   </View>

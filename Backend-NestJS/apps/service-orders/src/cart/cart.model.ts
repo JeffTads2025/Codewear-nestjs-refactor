@@ -1,14 +1,11 @@
 import {
   AutoIncrement,
-  BelongsTo,
   Column,
   DataType,
-  ForeignKey,
   Model,
   PrimaryKey,
   Table,
 } from 'sequelize-typescript';
-import { Product } from '../orders/product.model.js';
 
 @Table({ tableName: 'carts', timestamps: true })
 export class Cart extends Model {
@@ -23,13 +20,10 @@ export class Cart extends Model {
   @Column({ type: DataType.INTEGER, allowNull: false })
   declare userId: number;
 
-  @ForeignKey(() => Product)
   @Column({ type: DataType.INTEGER, allowNull: false })
   declare productId: number;
 
   @Column({ type: DataType.STRING(10), allowNull: true })
   declare size: string | null;
 
-  @BelongsTo(() => Product, { foreignKey: 'productId', as: 'Product' })
-  declare Product: Product;
 }

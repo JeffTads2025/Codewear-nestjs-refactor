@@ -4,20 +4,16 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { InjectConnection } from '@nestjs/sequelize';
-import { QueryTypes, Sequelize } from 'sequelize';
 import jwt from 'jsonwebtoken';
 import type { Request } from 'express';
+import { CatalogInternalClient } from '../catalog-internal.client.js';
 
 interface AdminTokenPayload extends jwt.JwtPayload {
   id?: unknown;
   role?: unknown;
-}
-
-interface ActiveUserRow {
-  isActive: boolean | number;
 }
 
 export interface AdminRequest extends Request {
@@ -26,7 +22,7 @@ export interface AdminRequest extends Request {
 
 @Injectable()
 export class AdminOrderGuard implements CanActivate {
-  constructor(@InjectConnection() private readonly database: Sequelize) {}
+  constructor(private readonly catalog: CatalogInternalClient) {}
 
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<AdminRequest>();
@@ -65,12 +61,13 @@ export class AdminOrderGuard implements CanActivate {
       throw new ForbiddenException('Acesso exclusivo para administradores');
     }
 
-    const users = await this.database.query<ActiveUserRow>(
-      'SELECT isActive FROM users WHERE id = ? LIMIT 1',
-      { replacements: [payload.id], type: QueryTypes.SELECT },
-    );
-    if (!users[0] || !users[0].isActive) {
-      throw new UnauthorizedException('Conta indisponível');
+    try {
+      await this.catalog.getUser(payload.id);
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw new UnauthorizedException('Conta indisponível');
+      }
+      throw error;
     }
 
     request.userId = payload.id;

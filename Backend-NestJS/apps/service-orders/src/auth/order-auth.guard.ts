@@ -3,19 +3,16 @@ import {
   ExecutionContext,
   Injectable,
   InternalServerErrorException,
+  NotFoundException,
+  ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { InjectConnection } from '@nestjs/sequelize';
-import { QueryTypes, Sequelize } from 'sequelize';
 import jwt from 'jsonwebtoken';
 import type { Request } from 'express';
+import { CatalogInternalClient } from '../catalog-internal.client.js';
 
 interface TokenPayload {
   id: number;
-}
-
-interface UserRow {
-  isActive: boolean | number;
 }
 
 export interface AuthenticatedRequest extends Request {
@@ -24,7 +21,7 @@ export interface AuthenticatedRequest extends Request {
 
 @Injectable()
 export class OrderAuthGuard implements CanActivate {
-  constructor(@InjectConnection() private readonly database: Sequelize) {}
+  constructor(private readonly catalog: CatalogInternalClient) {}
 
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
@@ -51,12 +48,13 @@ export class OrderAuthGuard implements CanActivate {
       throw new UnauthorizedException('Token inválido');
     }
 
-    const users = await this.database.query<UserRow>(
-      'SELECT isActive FROM users WHERE id = ? LIMIT 1',
-      { replacements: [payload.id], type: QueryTypes.SELECT },
-    );
-    if (!users[0] || !users[0].isActive) {
-      throw new UnauthorizedException('Conta indisponível');
+    try {
+      await this.catalog.getUser(payload.id);
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw new UnauthorizedException('Conta indisponível');
+      }
+      throw error;
     }
 
     request.userId = payload.id;
