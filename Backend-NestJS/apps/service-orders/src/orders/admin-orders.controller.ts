@@ -10,8 +10,7 @@ import { QueryTypes, Sequelize } from 'sequelize';
 import { AdminOrderGuard } from '../auth/admin-order.guard.js';
 import { Order } from './order.model.js';
 import { OrderItem } from './order-item.model.js';
-import { Product } from './product.model.js';
-import { User } from './user.model.js';
+import { CatalogInternalClient } from '../catalog-internal.client.js';
 
 interface DashboardMetrics {
   totalRevenue: number;
@@ -36,6 +35,7 @@ export class AdminOrdersController {
   constructor(
     @InjectConnection() private readonly database: Sequelize,
     @InjectModel(Order) private readonly orders: typeof Order,
+    private readonly catalog: CatalogInternalClient,
   ) {}
 
   @Get(['dashboard', 'metrics', 'revenue'])
@@ -68,12 +68,7 @@ export class AdminOrdersController {
           type: QueryTypes.SELECT,
         },
       );
-      const [users] = await this.database.query<{ totalUsers: number }>(
-        `SELECT COUNT(*) AS totalUsers
-         FROM users
-         WHERE role = 'client' AND isActive = 1`,
-        { type: QueryTypes.SELECT },
-      );
+      const totalUsers = await this.catalog.countActiveCustomers();
 
       return {
         totalRevenue: Number(row.totalRevenue),
@@ -81,7 +76,7 @@ export class AdminOrdersController {
         monthlyRevenue: Number(row.monthlyRevenue),
         yearlyRevenue: Number(row.yearlyRevenue),
         totalOrders: Number(row.totalOrders),
-        totalUsers: Number(users.totalUsers),
+        totalUsers,
       };
     } catch (error) {
       throw new InternalServerErrorException(
@@ -101,23 +96,33 @@ export class AdminOrdersController {
     try {
       const { count, rows } = await this.orders.findAndCountAll({
         include: [
-          { model: User, as: 'User', attributes: ['id', 'name', 'email'] },
-          {
-            model: OrderItem,
-            as: 'OrderItems',
-            include: [{
-              model: Product,
-              as: 'Product',
-              attributes: ['id', 'name', 'image_url'],
-            }],
-          },
+          { model: OrderItem, as: 'OrderItems' },
         ],
         order: [['createdAt', 'DESC']],
         limit,
         offset: (page - 1) * limit,
         distinct: true,
       });
-      return { orders: rows, totalPages: Math.ceil(count / limit) };
+      const total = count;
+
+      return {
+        orders: await Promise.all(rows.map(async (order) => {
+          const user = await this.catalog.getUserSummary(order.userId);
+          return {
+            ...order.get({ plain: true }),
+            User: { id: user.id, name: user.name },
+            OrderItems: (order.OrderItems ?? []).map((item) => ({
+              ...item.get({ plain: true }),
+              Product: {
+                id: item.productId,
+                name: item.productName ?? `Produto #${item.productId}`,
+                image_url: item.productImageUrl,
+              },
+            })),
+          };
+        })),
+        totalPages: Math.ceil(total / limit),
+      };
     } catch (error) {
       throw new InternalServerErrorException(
         'Não foi possível carregar vendas',
