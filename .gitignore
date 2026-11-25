@@ -1,5 +1,5 @@
-
 node_modules/
+/backups/
 
 
 .env
@@ -16,6 +16,8 @@ coverage/
 
 Backend-CodeWear/uploads/*
 !Backend-CodeWear/uploads/.gitkeep
+uploads/*
+!uploads/.gitkeep
 
 
 .expo/
@@ -34,4 +36,4 @@ expo-env.d.ts
 
 
 .DS_Store
-Thumbs.db
+Thumbs.dbgit

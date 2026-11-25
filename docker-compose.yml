@@ -1,11 +1,26 @@
 services:
-  mysql:
+  mysql-catalog:
     image: mysql:8.0
     environment:
-      MYSQL_DATABASE: codewear
+      MYSQL_DATABASE: codewear_catalog
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-senha}
     volumes:
-      - mysql_data:/var/lib/mysql
+      - mysql_catalog_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-senha}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - codewear
+
+  mysql-orders:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: codewear_orders
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-senha}
+    volumes:
+      - mysql_orders_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-senha}"]
       interval: 5s
@@ -31,18 +46,19 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3000
-      DB_HOST: mysql
+      DB_HOST: mysql-catalog
       DB_PORT: 3306
-      DB_NAME: codewear
+      DB_NAME: codewear_catalog
       DB_USER: root
       DB_PASS: ${DB_PASS:-senha}
       REDIS_URL: redis://redis:6379
       CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-60}
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-me}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY in .env}
     volumes:
       - ./uploads:/app/uploads
     depends_on:
-      mysql:
+      mysql-catalog:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -56,15 +72,17 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3001
-      DB_HOST: mysql
+      DB_HOST: mysql-orders
       DB_PORT: 3306
-      DB_NAME: codewear
+      DB_NAME: codewear_orders
       DB_USER: root
       DB_PASS: ${DB_PASS:-senha}
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-me}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY in .env}
+      CATALOG_INTERNAL_URL: http://service-catalog:3000/internal
     depends_on:
-      mysql:
+      mysql-orders:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -85,9 +103,10 @@ services:
       - codewear
 
 volumes:
-  mysql_data:
-    external: true
-    name: codewear_mysql-data
+  mysql_catalog_data:
+    name: mysql_catalog_data
+  mysql_orders_data:
+    name: mysql_orders_data
 
 networks:
   codewear:
