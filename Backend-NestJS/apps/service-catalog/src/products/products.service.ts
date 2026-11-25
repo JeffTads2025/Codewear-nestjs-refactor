@@ -5,8 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/sequelize';
-import { Includeable, Sequelize } from 'sequelize';
+import { Includeable, Sequelize, Transaction } from 'sequelize';
 import { RedisService } from '../redis/redis.service.js';
+import type { AuthenticatedUser } from '../auth/jwt-auth.guard.js';
 import { CreateProductDto } from './dto/create-product.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
 import { UpdateProductStockDto } from './dto/update-product-stock.dto.js';
@@ -68,10 +69,12 @@ export class ProductsService {
         });
       }
 
+      const total = count;
+
       const result = {
         products: rows,
-        totalPages: Math.ceil(count / limit),
-        total: count,
+        totalPages: Math.ceil(total / limit),
+        total,
       };
 
       this.logger.log(`GET /products source=DATABASE key=${cacheKey}`);
@@ -104,7 +107,7 @@ export class ProductsService {
     }
   }
 
-  async create(input: CreateProductDto) {
+  async create(input: CreateProductDto, actor: AuthenticatedUser) {
     const transaction = await this.database.transaction();
     let committed = false;
     try {
@@ -139,6 +142,12 @@ export class ProductsService {
           { transaction },
         );
       }
+      await this.recordProductAudit(
+        actor,
+        'CREATE_PRODUCT',
+        `Criou o produto '${product.name}' (ID ${product.id}).`,
+        transaction,
+      );
       await transaction.commit();
       committed = true;
       await this.invalidateCache();
@@ -153,7 +162,11 @@ export class ProductsService {
     }
   }
 
-  async update(id: number, input: UpdateProductDto) {
+  async update(
+    id: number,
+    input: UpdateProductDto,
+    actor: AuthenticatedUser,
+  ) {
     const transaction = await this.database.transaction();
     let committed = false;
     try {
@@ -194,6 +207,12 @@ export class ProductsService {
           );
         }
       }
+      await this.recordProductAudit(
+        actor,
+        'UPDATE_PRODUCT',
+        `Editou o produto '${product.name}' (ID ${product.id}).`,
+        transaction,
+      );
       await transaction.commit();
       committed = true;
       await this.invalidateCache();
@@ -209,19 +228,34 @@ export class ProductsService {
     }
   }
 
-  updateStock(id: number, input: UpdateProductStockDto) {
-    return this.update(id, input);
+  updateStock(
+    id: number,
+    input: UpdateProductStockDto,
+    actor: AuthenticatedUser,
+  ) {
+    return this.update(id, input, actor);
   }
 
-  async delete(id: number) {
+  async delete(id: number, actor: AuthenticatedUser) {
+    const transaction = await this.database.transaction();
+    let committed = false;
     try {
-      const product = await this.products.findByPk(id);
+      const product = await this.products.findByPk(id, { transaction });
       if (!product) throw new NotFoundException('Produto não encontrado');
 
-      await product.update({ isVisible: false });
+      await product.update({ isVisible: false }, { transaction });
+      await this.recordProductAudit(
+        actor,
+        'DELETE_PRODUCT',
+        `Excluiu o produto '${product.name}' (ID ${product.id}) da vitrine.`,
+        transaction,
+      );
+      await transaction.commit();
+      committed = true;
       await this.invalidateCache();
       return { message: 'Produto excluído com sucesso' };
     } catch (error) {
+      if (!committed) await transaction.rollback();
       if (error instanceof NotFoundException) throw error;
       this.logger.error('Failed to delete product', error);
       throw new InternalServerErrorException('Erro ao excluir produto');
@@ -236,6 +270,28 @@ export class ProductsService {
       this.logger.error('Failed to invalidate product catalog cache', error);
       throw error;
     }
+  }
+
+  private async recordProductAudit(
+    actor: AuthenticatedUser,
+    action: string,
+    details: string,
+    transaction: Transaction,
+  ) {
+    await this.database.query(
+      `INSERT INTO audit_logs
+       (adminId, adminName, action, details, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, NOW(), NOW())`,
+      {
+        replacements: [
+          actor.id,
+          actor.name,
+          action,
+          `${details} Autor: ${actor.name} <${actor.email}> (ID ${actor.id}).`,
+        ],
+        transaction,
+      },
+    );
   }
 
   private isPromotionActive(promotion: Promotion): boolean {

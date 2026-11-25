@@ -16,6 +16,7 @@ function createDatabaseMock() {
       rollback: vi.fn().mockResolvedValue(undefined),
       finished: null,
     }),
+    query: vi.fn().mockResolvedValue([[], 1]),
   } as unknown as Sequelize;
 }
 
@@ -27,15 +28,25 @@ function createRedisMock() {
   } as unknown as RedisService;
 }
 
-function createService(redis = createRedisMock()) {
+function createService(
+  redis = createRedisMock(),
+  database = createDatabaseMock(),
+) {
   return new ProductsService(
     Product,
     ProductSize,
     Promotion,
-    createDatabaseMock(),
+    database,
     redis,
   );
 }
+
+const admin = {
+  id: 42,
+  email: 'admin@example.com',
+  name: 'Admin User',
+  role: 'admin',
+};
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -125,30 +136,48 @@ describe('ProductsService', () => {
   });
 
   it('invalidates cached catalog pages after creating a product', async () => {
-    const createdProduct = { id: 1 } as Product;
+    const createdProduct = { id: 1, name: 'Test Product' } as Product;
     vi.spyOn(Product, 'create').mockResolvedValue(createdProduct);
     vi.spyOn(Product, 'findByPk').mockResolvedValue(createdProduct);
     const redis = createRedisMock();
+    const database = createDatabaseMock();
 
-    await createService(redis).create({
+    await createService(redis, database).create({
       name: 'Test',
       price: 10,
       stock: 2,
-    });
+    }, admin);
 
     expect(redis.deletePattern).toHaveBeenCalledWith('catalog:products:*');
+    expect(database.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO audit_logs'),
+      expect.objectContaining({
+        replacements: [
+          admin.id,
+          admin.name,
+          'CREATE_PRODUCT',
+          "Criou o produto 'Test Product' (ID 1). Autor: Admin User <admin@example.com> (ID 42).",
+        ],
+        transaction: expect.anything(),
+      }),
+    );
   });
 
   it('invalidates cached catalog pages after updating a product', async () => {
-    const product = { id: 1, update: vi.fn().mockResolvedValue(undefined) } as unknown as Product;
+    const product = {
+      id: 1,
+      name: 'Test Product',
+      update: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Product;
     vi.spyOn(Product, 'findByPk').mockResolvedValue(product);
     const replaceSizes = vi.spyOn(ProductSize, 'destroy').mockResolvedValue(0);
     const createSizes = vi.spyOn(ProductSize, 'bulkCreate').mockResolvedValue([]);
     const replacePromotions = vi.spyOn(Promotion, 'destroy').mockResolvedValue(0);
     const createPromotions = vi.spyOn(Promotion, 'bulkCreate').mockResolvedValue([]);
     const redis = createRedisMock();
+    const database = createDatabaseMock();
 
-    await createService(redis).update(1, {
+    await createService(redis, database).update(1, {
       stock: 5,
       image_url: 'https://example.com/shirt.jpg',
       sizes: [{ size: 'M', stock: 5 }],
@@ -158,7 +187,7 @@ describe('ProductsService', () => {
         validUntil: '2026-12-31',
         isActive: true,
       }],
-    });
+    }, admin);
 
     expect(product.update).toHaveBeenCalledWith(
       { stock: 5, image_url: 'https://example.com/shirt.jpg' },
@@ -188,19 +217,51 @@ describe('ProductsService', () => {
       { transaction: expect.anything() },
     );
     expect(redis.deletePattern).toHaveBeenCalledWith('catalog:products:*');
+    expect(database.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO audit_logs'),
+      expect.objectContaining({
+        replacements: [
+          admin.id,
+          admin.name,
+          'UPDATE_PRODUCT',
+          "Editou o produto 'Test Product' (ID 1). Autor: Admin User <admin@example.com> (ID 42).",
+        ],
+        transaction: expect.anything(),
+      }),
+    );
   });
 
   it('deletes a product and invalidates cached catalog pages', async () => {
-    const product = { id: 1, update: vi.fn().mockResolvedValue(undefined) } as unknown as Product;
+    const product = {
+      id: 1,
+      name: 'Test Product',
+      update: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Product;
     vi.spyOn(Product, 'findByPk').mockResolvedValue(product);
     const redis = createRedisMock();
+    const database = createDatabaseMock();
 
-    await expect(createService(redis).delete(1)).resolves.toEqual({
+    await expect(createService(redis, database).delete(1, admin)).resolves.toEqual({
       message: 'Produto excluído com sucesso',
     });
 
-    expect(product.update).toHaveBeenCalledWith({ isVisible: false });
+    expect(product.update).toHaveBeenCalledWith(
+      { isVisible: false },
+      { transaction: expect.anything() },
+    );
     expect(redis.deletePattern).toHaveBeenCalledWith('catalog:products:*');
+    expect(database.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO audit_logs'),
+      expect.objectContaining({
+        replacements: [
+          admin.id,
+          admin.name,
+          'DELETE_PRODUCT',
+          "Excluiu o produto 'Test Product' (ID 1) da vitrine. Autor: Admin User <admin@example.com> (ID 42).",
+        ],
+        transaction: expect.anything(),
+      }),
+    );
   });
 
   it('updates stock through the shared update path and invalidates the catalog', async () => {
@@ -208,7 +269,7 @@ describe('ProductsService', () => {
     vi.spyOn(Product, 'findByPk').mockResolvedValue(product);
     const redis = createRedisMock();
 
-    await createService(redis).updateStock(1, { stock: 7 });
+    await createService(redis).updateStock(1, { stock: 7 }, admin);
 
     expect(product.update).toHaveBeenCalledWith(
       { stock: 7 },

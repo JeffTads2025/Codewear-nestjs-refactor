@@ -10,6 +10,7 @@ import { RedisModule } from './redis/redis.module.js';
 import { OrdersEventSubscriber } from './events/orders-event-subscriber.js';
 import { AuthModule } from './auth/auth.module.js';
 import { User } from './auth/user.model.js';
+import { InternalModule } from './internal/internal.module.js';
 
 @Module({
   imports: [
@@ -17,7 +18,7 @@ import { User } from './auth/user.model.js';
       dialect: 'mysql',
       host: process.env.DB_HOST ?? '127.0.0.1',
       port: Number(process.env.DB_PORT ?? 3306),
-      database: process.env.DB_NAME ?? 'codewear_db',
+      database: process.env.DB_NAME ?? 'codewear_catalog',
       username: process.env.DB_USER ?? 'root',
       password: process.env.DB_PASS ?? '',
       models: [Product, ProductSize, Promotion, User],
@@ -28,6 +29,7 @@ import { User } from './auth/user.model.js';
     RedisModule,
     AuthModule,
     ProductsModule,
+    InternalModule,
   ],
   controllers: [AppController],
   providers: [AppService, OrdersEventSubscriber],

@@ -8,10 +8,11 @@ import {
 import { InjectModel } from '@nestjs/sequelize';
 import { User } from './user.model.js';
 import { Roles } from './roles.decorator.js';
+import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { RolesGuard } from './roles.guard.js';
 
 @Controller('admin')
-@UseGuards(RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin')
 export class AdminUsersController {
   constructor(@InjectModel(User) private readonly users: typeof User) {}
@@ -40,7 +41,8 @@ export class AdminUsersController {
         order: [['createdAt', 'DESC']],
         limit,
       });
-      return { users: rows, total: count };
+      const total = count;
+      return { users: rows, total };
     } catch {
       throw new InternalServerErrorException('Não foi possível carregar clientes');
     }
